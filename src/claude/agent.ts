@@ -41,6 +41,7 @@ export interface AgentUsage {
 interface AgentResponse {
   text: string;
   toolsUsed: string[];
+  createdFiles: string[];
   usage?: AgentUsage;
   compaction?: { trigger: 'manual' | 'auto'; preTokens: number };
   sessionInit?: { model: string; sessionId: string };
@@ -314,6 +315,7 @@ export async function sendToAgent(
 
   let fullText = '';
   const toolsUsed: string[] = [];
+  const createdFiles: string[] = [];
   let gotResult = false;
   let resultUsage: AgentUsage | undefined;
   let compactionEvent: { trigger: 'manual' | 'auto'; preTokens: number } | undefined;
@@ -445,7 +447,12 @@ export async function sendToAgent(
       mcpServers['claudegram-tools'] = server;
     }
 
+    // Strip CLAUDECODE env var to prevent "nested session" errors
+    const cleanEnv = { ...process.env };
+    delete cleanEnv.CLAUDECODE;
+
     const queryOptions: Parameters<typeof query>[0]['options'] = {
+      env: cleanEnv,
       cwd,
       tools: toolsOption,
       ...(allowedToolsOption ? { allowedTools: allowedToolsOption } : {}),
@@ -528,6 +535,18 @@ export async function sendToAgent(
                   : '';
             logAt('verbose', `[Claude] [${formatDuration(getElapsedMs(timer))}] Tool: ${block.name}${inputSummary ? ` → ${inputSummary}` : ''}`);
             toolsUsed.push(block.name);
+            // Track files created by Write tool for image sending
+            if (block.name === 'Write' && toolInput.file_path) {
+              createdFiles.push(String(toolInput.file_path));
+            }
+            // Track image files created by Bash commands (e.g. screencapture)
+            if (block.name === 'Bash' && toolInput.command) {
+              const cmd = String(toolInput.command);
+              const imagePathMatch = cmd.match(/(?:screencapture|convert|ffmpeg|cp|mv)\s+.*?(\/\S+\.(?:png|jpg|jpeg|gif|webp|bmp|svg|heic|tiff))\b/i);
+              if (imagePathMatch) {
+                createdFiles.push(imagePathMatch[1]);
+              }
+            }
             // Special logging for Task tool (subagents) - always log at basic level
             if (block.name === 'Task') {
               const taskDesc = toolInput.description || toolInput.prompt || 'unnamed task';
@@ -638,6 +657,7 @@ export async function sendToAgent(
       return {
         text: '✅ Successfully cancelled - no tools or agents in process.',
         toolsUsed,
+        createdFiles,
       };
     }
 
@@ -672,6 +692,7 @@ export async function sendToAgent(
   return {
     text: stripReasoningSummary(fullText) || 'No response from Claude.',
     toolsUsed,
+    createdFiles,
     usage: resultUsage,
     compaction: compactionEvent,
     sessionInit: initEvent,
@@ -704,6 +725,7 @@ IMPORTANT: When you have fully completed this task, respond with the word "DONE"
   let iteration = 0;
   let combinedText = '';
   const allToolsUsed: string[] = [];
+  const allCreatedFiles: string[] = [];
   let isComplete = false;
 
   while (iteration < maxIterations && !isComplete) {
@@ -714,6 +736,7 @@ IMPORTANT: When you have fully completed this task, respond with the word "DONE"
       return {
         text: '🛑 Loop cancelled.',
         toolsUsed: allToolsUsed,
+        createdFiles: [],
       };
     }
 
@@ -736,6 +759,7 @@ IMPORTANT: When you have fully completed this task, respond with the word "DONE"
 
       combinedText += response.text;
       allToolsUsed.push(...response.toolsUsed);
+      allCreatedFiles.push(...response.createdFiles);
 
       onIterationComplete?.(iteration, response.text);
 
@@ -753,6 +777,7 @@ IMPORTANT: When you have fully completed this task, respond with the word "DONE"
         return {
           text: combinedText + '\n\n🛑 Loop cancelled.',
           toolsUsed: allToolsUsed,
+          createdFiles: [],
         };
       }
       throw error;
@@ -762,6 +787,7 @@ IMPORTANT: When you have fully completed this task, respond with the word "DONE"
   return {
     text: stripReasoningSummary(combinedText),
     toolsUsed: allToolsUsed,
+    createdFiles: allCreatedFiles,
   };
 }
 

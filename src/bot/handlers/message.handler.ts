@@ -469,6 +469,9 @@ async function handleAgentReply(
         await messageSender.finishStreaming(ctx, response.text);
         await maybeSendVoiceReply(ctx, response.text);
 
+        // Send any created image files as photos/documents
+        await sendCreatedImages(ctx, response.createdFiles);
+
         // Context visibility notifications
         await sendUsageFooter(ctx, response.usage);
         await sendCompactionNotification(ctx, response.compaction);
@@ -581,6 +584,9 @@ async function handleStreamingResponse(
     await messageSender.finishStreaming(ctx, response.text);
     await maybeSendVoiceReply(ctx, response.text);
 
+    // Send any created image files as photos/documents
+    await sendCreatedImages(ctx, response.createdFiles);
+
     // Context visibility notifications
     await sendUsageFooter(ctx, response.usage);
     await sendCompactionNotification(ctx, response.compaction);
@@ -588,6 +594,36 @@ async function handleStreamingResponse(
   } catch (error) {
     await messageSender.cancelStreaming(ctx);
     throw error;
+  }
+}
+
+const IMAGE_EXTENSIONS = new Set(['.png', '.jpg', '.jpeg', '.gif', '.webp', '.bmp', '.svg', '.heic', '.heif', '.tiff']);
+
+async function sendCreatedImages(ctx: Context, createdFiles: string[]): Promise<void> {
+  for (const filePath of createdFiles) {
+    const ext = path.extname(filePath).toLowerCase();
+    if (!IMAGE_EXTENSIONS.has(ext)) continue;
+    if (!fs.existsSync(filePath)) continue;
+
+    try {
+      const stat = fs.statSync(filePath);
+      if (stat.size > 10 * 1024 * 1024) {
+        // Too large for sendPhoto, send as document
+        await messageSender.sendDocument(ctx, filePath, `📎 ${path.basename(filePath)}`);
+      } else {
+        const { InputFile } = await import('grammy');
+        const fileBuffer = fs.readFileSync(filePath);
+        await ctx.replyWithPhoto(new InputFile(fileBuffer, path.basename(filePath)), {
+          caption: path.basename(filePath),
+        });
+      }
+    } catch (err) {
+      console.error(`[Image] Failed to send ${filePath}:`, err);
+      // Fallback to document
+      try {
+        await messageSender.sendDocument(ctx, filePath, `📎 ${path.basename(filePath)}`);
+      } catch {}
+    }
   }
 }
 
@@ -610,6 +646,9 @@ async function handleWaitResponse(
 
     await messageSender.sendMessage(ctx, response.text);
     await maybeSendVoiceReply(ctx, response.text);
+
+    // Send any created image files as photos/documents
+    await sendCreatedImages(ctx, response.createdFiles);
 
     // Context visibility notifications
     await sendUsageFooter(ctx, response.usage);
