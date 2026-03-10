@@ -54,6 +54,7 @@ import {
 import { handleMessage } from './handlers/message.handler.js';
 import { handleVoice } from './handlers/voice.handler.js';
 import { handlePhoto, handleImageDocument } from './handlers/photo.handler.js';
+import { handleDocument } from './handlers/document.handler.js';
 
 // Resolve sequentialize constraint: same-chat updates are ordered,
 // but /cancel is registered BEFORE this middleware so it bypasses it.
@@ -231,7 +232,7 @@ export async function createBot(): Promise<Bot> {
   // Handle images
   bot.on('message:photo', handlePhoto);
 
-  // Handle documents: check for audio transcribe ForceReply first, then image documents
+  // Handle documents: check for audio transcribe ForceReply first, then image documents, then general files
   bot.on('message:document', async (ctx) => {
     // Try transcribe-document path first (audio MIME + reply to ForceReply)
     const replyTo = ctx.message?.reply_to_message;
@@ -243,8 +244,13 @@ export async function createBot(): Promise<Bot> {
         return;
       }
     }
-    // Fall through to image document handler
-    await handleImageDocument(ctx);
+    // Image documents (sent as file to preserve quality)
+    if (doc?.mime_type?.startsWith('image/')) {
+      await handleImageDocument(ctx);
+      return;
+    }
+    // General file documents (PDFs, code files, text files, etc.)
+    await handleDocument(ctx);
   });
 
   // Handle regular text messages
