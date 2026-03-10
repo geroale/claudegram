@@ -111,8 +111,6 @@ with open('$CREDENTIALS_FILE', 'w') as f:
 
 log "SUCCESS: Token refreshed. New expiry: $(python3 -c "import time; print(time.ctime($NEW_EXPIRES_AT/1000))")"
 
-# ── Also update .env if it has CLAUDE_CODE_OAUTH_TOKEN ────────
-ENV_FILE="$SCRIPT_DIR/.env"
-if grep -q '^CLAUDE_CODE_OAUTH_TOKEN=' "$ENV_FILE" 2>/dev/null; then
-    sed -i "s|^CLAUDE_CODE_OAUTH_TOKEN=.*|CLAUDE_CODE_OAUTH_TOKEN=${NEW_ACCESS_TOKEN}|" "$ENV_FILE"
-fi
+# NOTE: Do NOT set CLAUDE_CODE_OAUTH_TOKEN in .env — when present as an
+# env var, the SDK uses it WITHOUT a refresh token, breaking auto-refresh.
+# The SDK reads ~/.claude/.credentials.json directly (which has both tokens).
